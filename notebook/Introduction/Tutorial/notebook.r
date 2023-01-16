@@ -205,3 +205,80 @@ write.table(result, filename, append = T, quote = F, sep = ",", row.names = T, c
 # 説明変数が多くなった場合に完結に書く方法
 dat <- df[,c(3,2,1)]  # 使う説明変数を指定
 ans <- lm(df$肺活量~.,data=dat)
+
+# 関数の作り方　<- function(引数){関数内で行う処理}
+fun1 <- function(x){
+    a <- x^2
+    b <- x+10
+    ans <- a+b
+    return(ans)
+}
+
+fun1(10)
+
+# 例：ロジスティック回帰分析の関数
+fun2 <- function(dat, num){
+    ans <- glm(df$病気~.,data = dat, family = binomial)
+    s.ans <- summary(ans)
+    coe <- s.ans$coefficients
+    N <- nrow(df)
+    aic <- AIC(ans)
+    result <- cbind(coe, aic, N)
+    result[2:nrow(result), 5:6] <- ""
+    filename <- paste("logistic回帰-sample-", num, "変量.csv", sep = "")
+    write.table(matrix(c("", colnames(result)), nrow = 1), 
+                filename, 
+                append = F, 
+                quote = F, 
+                sep = ",",
+                row.names = F,
+                col.names = F)
+    write.table(result, 
+                file = filename, 
+                append = T,
+                quote = F,
+                sep = ",",
+                row.names = T,
+                col.names = F)
+    write.table("", 
+                file = filename,
+                append = T,
+                quote = F,
+                sep = ",",
+                row.names = F,
+                col.names = F)
+}
+
+fun2(df[,c(5,1,2,3)], 3)
+
+# 回帰分析のグラフのプロット
+x <- c(1,2,3,2,7,5,9,1)
+y <- c(14,20,21,15,36,27,40,8)
+ans <- lm(y~x)
+
+# 点のプロット
+plot(x, y)
+
+# 回帰直線のプロット
+lines(x, fitted(ans), col = "red")
+dev.off()  # 作図の終了コマンド
+
+# プロットした図（グラフ）の保存
+f1 <- "sample1.png"
+f2 <- "sample2.jpeg"
+
+png(f1, width = 800, height = 600)
+plot(x,y)
+lines(x, fitted(ans), col = "red")
+dev.off()
+plot(x, y)
+lines(x, fitted(ans), col = "red")
+dev.copy(jpeg, f2, width = 900, height = 675)
+dev.off()
+
+# パッケージのインストールの手順
+install.packages("scatterplot3d")
+install.packages("mvtnorm")
+
+library(scatterplot3d)
+library(mvtnorm)
