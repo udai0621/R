@@ -1,6 +1,8 @@
 ---
 title: "6章Rによる時系列の取り扱い"
-output: html_document
+site: bookdown::bookdown_site
+output:
+  bookdown::gitbook: default
 ---
 
 ```{r}
