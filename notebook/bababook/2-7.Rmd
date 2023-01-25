@@ -15,29 +15,28 @@ library(ggfortify)
 theme_set(theme_bw(base_family = "HiraKakuProN-W3"))
 ```
 
-#### 7-2.分析の対象
+## 7-2.分析の対象
 
--   Seatsbeltsを使用
+- Seatsbeltsを使用
+    - front：前席における死傷者数
+    - PetrolPrice：ガソリンの値段
+    - law：前席においてシートベルトの義務付け法案の有無。1983年1月31日に施行。
 
-    -   front：前席における死傷者数
-    -   PetrolPrice：ガソリンの値段
-    -   law：前席においてシートベルトの義務付け法案の有無。1983年1月31日に施行。
+```{r}
+front <- Seatbelts[, "front"]
+```
 
-    ```{r}
-    front <- Seatbelts[, "front"]
-    ```
+- このデータに関しては、モデルが複雑になる。
 
--   このデータに関しては、モデルが複雑になる。
+    - 季節成分が必須。毎年12月頃に死傷者数が増加している。
+    - ガソリンの値段が高いと車にあまり乗らなくなり、交通事故死傷者数が減ると考えられる。
+    - シートベルト法案も交通事故死傷者数を減らす効果がある。
 
-    -   季節成分が必須。毎年12月頃に死傷者数が増加している。
-    -   ガソリンの値段が高いと車にあまり乗らなくなり、交通事故死傷者数が減ると考えられる。
-    -   シートベルト法案も交通事故死傷者数を減らす効果がある。
+- 以上より、季節成分＋外生変数の入ったARIMAモデル、「SARIMAX」を使う。
 
--   以上より、季節成分＋外生変数の入ったARIMAモデル、「SARIMAX」を使う。
+## 対数変換
 
-#### 対数変換
-
--   個数や人数といったデータは対数変換してからモデル化するとうまくモデル化できる傾向がある。
+- 個数や人数といったデータは対数変換してからモデル化するとうまくモデル化できる傾向がある。
 
 ```{r}
 # 対数系列
@@ -47,7 +46,7 @@ log_front <- log(front)
 ggtsdisplay(log_front, main = "対数系列")
 ```
 
-#### 7-4.差分系列の作成方法
+## 7-4.差分系列の作成方法
 
 ```{r}
 # 原系列
@@ -75,7 +74,7 @@ log_diff <- diff(log_front)
 ggtsdisplay(log_diff, main = "対数差分系列")
 ```
 
-#### 7-5.季節成分の取り扱い
+## 7-5.季節成分の取り扱い
 
 ```{r}
 # 月ごとに分けたグラフを図示
@@ -97,17 +96,17 @@ season_log_diff <- diff(log_diff, lag = frequency(log_diff))
 ggtsdisplay(season_log_diff, main = "季節差分系列")
 ```
 
-#### 7-6.自己相関とコレログラム
+## 7-6.自己相関とコレログラム
 
 ```{r}
 # 自己相関を数値で得る
 acf(season_log_diff, plot = F, lag.max = 12)
 ```
 
-#### 7-7.訓練データとテストデータに分ける
+## 7-7.訓練データとテストデータに分ける
 
--   あらかじめ対数変換はしておく
--   差分系列は、ARIMAが勝手に差分をとってくれるため、行わない。
+- あらかじめ対数変換はしておく
+- 差分系列は、ARIMAが勝手に差分をとってくれるため、行わない。
 
 ```{r}
 # データを抽出
@@ -125,13 +124,13 @@ test <- window(Seatbelts_log, start = c(1984, 1))
 petrol_law <- train[, c("PetrolPrice", "law")]
 ```
 
-#### 7-8.ARIMAモデルの推定
+## 7-8.ARIMAモデルの推定
 
--   forecastのArima関数を用いて、SARIMAXを構築。
-    -   $y$：応答関数
-    -   $order$：$SARIMA(p,d,q)(P,D,Q)$における$(p,d,q)$
-    -   $seasonal$：季節成分の次数$(P,D,Q)$
-    -   $xreg$：説明変数の指定
+- forecastのArima関数を用いて、SARIMAXを構築。
+  - $y$：応答関数
+  - $order$：$SARIMA(p,d,q)(P,D,Q)$における$(p,d,q)$
+  - $seasonal$：季節成分の次数$(P,D,Q)$
+  - $xreg$：説明変数の指定
 
 ```{r}
 model_sarimax <- Arima(
@@ -145,7 +144,7 @@ model_sarimax <- Arima(
 model_sarimax
 ```
 
-#### 7-9.補足：差分系列とARIMAの次数の関係
+## 7-9.補足：差分系列とARIMAの次数の関係
 
 ```{r}
 Arima(
@@ -177,7 +176,7 @@ Arima(
 )
 ```
 
-#### 7-10.自動モデル選択$auto.arima関数$
+## 7-10.自動モデル選択$auto.arima関数$
 
 - forecastにあるauto.arima関数を用いて、自動でモデルを選択する。
 
@@ -198,3 +197,143 @@ sarimax_petrol_law <- auto.arima(
 ```{r}
 sarimax_petrol_law
 ```
+## 7-11.定常性・反転可能性のチェック
+- モデルの評価として、「定常性」と「反転可能性」を確認
+- 実際は、auto.arima関数ですでに行われている。
+- polyroot関数が多項式の根を求める->1よりも大きい数字であることがポイント（定常性も反転可能性も満たす）
+
+```{r}
+# 特性方程式の解の絶対値を求める
+abs(polyroot(c(1, -coef(sarimax_petrol_law)[c("ar1", "ar2")])))
+```
+
+- MAおよび季節差分のAR項についても行う。
+- MAにおける反転可能条件は、AR項の定常条件の特性方程式とは異なることに注意
+```{r}
+# MA項
+abs(polyroot(c(1, coef(sarimax_petrol_law)[c("ma1")])))
+
+# Seasonal AR項
+abs(polyroot(c(1, -coef(sarimax_petrol_law)[c("sma1")])))
+```
+
+## 7-12.残差のチェック
+- 残差のチェックを行う。
+- まず、残差の自己相関の検定を行う。
+- $p-value>0.5$より有意な自己相関は見られなかったということになり、「明らかな問題」がないと結論付けられる
+
+```{r}
+checkresiduals(sarimax_petrol_law)
+```
+- 次に残差の正規性の検定。
+  + jarque.bera.test：正規性の検定を行う関数
+  + resid：残差の取得を行う関数 
+- 結果として、こちらも正規分布に有意に異なっているとは言えない。（つまり、問題なし）
+```{r}
+jarque.bera.test(resid(sarimax_petrol_law))
+```
+
+## 7-13.ARIMAによる予測
+- 問題なく同定されたモデルを用いて予測を行う。
+- 予測については、冒頭で切り分けておいたテストデータを使用。
+- forecast内のforecast関数を使用
+
+```{r, cache=TRUE}
+petrol_law_test <- test[, c("PetrolPrice", "law")]
+sarimax_f <- forecast(
+  sarimax_petrol_law,
+  xreg = petrol_law_test,
+  h =12,  # 12時点まで予測
+  level = c(95, 70)  # 信頼区間95％と70％の予測区間についても出力
+)
+
+sarimax_f
+```
+```{r}
+# 予測結果の図示
+autoplot(sarimax_f, predict.colour = 1, main = "ARIMAによる予測")
+```
+- 予測結果は出たものの問題がある。それは、説明変数に"PetrolPrice"を用いていることである。これは、未来のデータである。
+- そのため、何かしらで代用する必要がある。→過去の石油価格の平均値
+  - rep：繰り返し同じ値を出力する関数→rep(1,12)とすると、1が12回出力される
+```{r}
+# 石油価格の平均のdata.frameを作成
+petrol_law_mean <- data.frame(
+  PetrolPrice=rep(mean(train[, "PetrolPrice"]),12),
+  law=rep(1,12)
+)
+
+# data.frame->matrixに変換
+petrol_law_mean <- matrix(as.matrix(petrol_law_mean), nrow(petrol_law_mean), ncol(petrol_law_mean), )
+colnames(petrol_law_mean) <- c("PetrolPrice", "law")
+petrol_law_mean
+
+# forecastで予測
+sarimax_f_mean <- forecast(sarimax_petrol_law, xreg = petrol_law_mean)
+```
+
+- また、別パターンとして、直近12ヶ月の石油価格を用いた予測値も用意
+```{r}
+# 直近のデータを抽出したdata.frameを作成
+petrol_law_tail <- data.frame(
+  PetrolPrice=rep(tail(train[, "PetrolPrice"], n=1), 12),
+  law=rep(1,12)
+)
+
+# data.frame->matrixに変換
+petrol_law_tail <- matrix(as.matrix(petrol_law_tail), nrow(petrol_law_tail), ncol(petrol_law_tail))
+colnames(petrol_law_tail) <- c("PetrolPrice", "law")
+petrol_law_tail
+
+sarimax_f_tail <- forecast(sarimax_petrol_law, xreg = petrol_law_tail)
+```
+## 7-14.ナイーブ予測
+- ナイーブ予測を用いて、予測精度の比較を行う。
+  - ナイーブ予測：特別な技術を必要としない単純な予測のこと。
+- 以下２つを比較対象とする。
+  1. 過去の平均値を予測値として出す。
+  2. 前時点の値を予測値として出す。
+```{r}
+# 平均値：meanf
+naive_f_mean <- meanf(train[, "front"], h=12)
+
+# 前時点：rwf
+naive_f_latest <- rwf(train[, "front"], h=12)
+```
+  
+## 7-15.予測の評価
+- RMSEを用いて評価する。
+```{r}
+sarimax_rmse <- sqrt(
+  sum((sarimax_f$mean - test[, "front"])^2) / length(sarimax_f$mean)
+)
+
+sarimax_rmse
+```
+
+- forecastのaccuracy関数を用いても可能
+```{r}
+accuracy(sarimax_f, x=test[, "front"])
+
+accuracy(sarimax_f, x=test[, "front"])["Test set", "RMSE"]
+```
+- 石油価格がわかっていない場合も同様の要領で求める。
+```{r}
+# 石油価格の平均値を使用
+accuracy(sarimax_f_mean, x=test[, "front"])["Test set", "RMSE"]
+
+# 直近の石油価格を使用した場合
+accuracy(sarimax_f_tail, x=test[, "front"])["Test set", "RMSE"]
+```
+
+- ナイーブ予測の場合も同様の要領で求める。
+```{r}
+# ナイーブ予測：平均値
+accuracy(naive_f_mean, x=test[, "front"])["Test set", "RMSE"]
+
+# ナイーブ予測：直近の値
+accuracy(naive_f_latest, x=test[, "front"])["Test set", "RMSE"]
+```
+
+- 平均値、直近のデータによる予測のどちらの場合も、ナイーブ予測の結果を上回っていることがわかる。
+- 分析については、これにて終了。
