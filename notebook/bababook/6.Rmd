@@ -1,0 +1,156 @@
+---
+title: "6章Rによる時系列の取り扱い"
+output: html_document
+---
+
+```{r}
+# パッケージのインポート
+library(xts)
+library(forecast)
+library(urca)
+
+library(ggplot2)
+library(ggfortify)
+par(family = "HiraKakuProN-W3")
+theme_set( theme_bw(base_family = "HiraKakuProN-W3"))
+```
+
+#### 6-12.時系列データts型
+- 開始時点と「1年に何回データが取られるか」という頻度を指定
+
+```{r}
+# 2000年1月から月単位で36個を格納
+ts_sample <- ts(1:36, start = c(2000,1), frequency = 12)
+ts_sample
+```
+```{r}
+# 四半期の場合
+ts_freq4 <- ts(c(1,4,7,3,9,2,5,3), start = c(2000,1), frequency = 4)
+ts_freq4
+```
+- 多変量時系列データを作成する場合は、matrix型やdata.frame型のデータを引数に入れる。
+```{r}
+# 行列の作成
+mat_with_name <- matrix(
+  c(1,2,3,4,5,6,7,8),
+  ncol = 4,
+  byrow = T,
+  dimnames = list(c("row1","row2"), c("col1", "col2", "col3", "col4"))
+)
+
+# 作成した行列を用いて、ts型に変換
+ts_multi <- ts(mat_with_name, start = c(2000,1), frequency = 12)
+ts_multi
+```
+- 作成したts型のデータに対して、window関数を用いることで、特定の期間を抽出可能
+
+```{r}
+window(ts_freq4, start=c(2000,2), end=c(2001,1))
+```
+
+- RにはPython同様、様々なサンプルデータが用意されている。
+
+```{r}
+# シートベルト法案の有無と交通事故死傷者数の時系列推移
+head(Seatbelts[,], n = 3)
+```
+```{r}
+# 多変量の場合、[]で特定の列を抽出
+Seatbelts[, "front"]
+```
+```{r}
+# ベクトルを用いて、複数列の抽出
+Seatbelts[, c("front", "PetrolPrice")]
+```
+```{r}
+# subset関数で特定の月のみを抽出(forecastに内包)
+subset(Seatbelts[, "front"], month = 3)
+```
+#### 6-13.拡張された時系列データxts型
+- ts型は日単位に弱いという欠点がある。
+- その欠点を補うのにzoo等の時系列を取り扱う型が用意されており、それを統合したのがxtsである。
+
+```{r}
+# 行名として日付を指定したmatrix型データを引数に与える
+xts_sample <- as.xts(matrix(
+  c(1,2,3,4,5),
+  dimnames = list(
+    c("2000-01-01","2000-01-02","2000-01-03","2000-01-04","2000-01-05")
+  ),
+  ncol = 1
+))
+xts_sample
+```
+```{r}
+# xts型はデータ抽出がとても簡単
+xts_sample["2000-01-01"]
+```
+```{r}
+# ある日付以降
+xts_sample["2000-01-02::"]
+
+# 範囲指定
+xts_sample["2000-01-02::2000-01-04"]
+```
+
+#### 6-14.ファイルデータの取り込み
+- ファイルからデータを読み込むと原則data.frame型で読み込まれる。
+- ts型は引数にdata.frame型を取れるためそのまま変換が可能
+- xts型はそうはいかず、少々工夫が必要になる。
+
+```{r}
+file_data <- read.csv("./data/5-2-1-timeSeries.csv")
+file_data
+```
+```{r}
+# ファイルのフルパスではなく、ファイル選択ダイアログを表示し、選択
+# file_data_2 <- read.csv(file.choose())
+```
+
+- read.delim("clipboard")を使うことで、Excel等でコピーした内容をそのまま取り込むことができる。
+
+```{r}
+class(file_data)
+```
+
+- xts型に変換するには、read.zoo()を用いるのが簡単
+
+```{r}
+# 1列目が時間のラベルになっている。
+file_data_xts <- as.xts(
+  read.zoo(file_data)
+)
+file_data_xts
+```
+
+#### 6-15.グラフの描画
+```{r}
+plot(
+  Seatbelts[, "front"],
+  main = "イギリスの交通事故死者数（前席）",
+  xlab = "年",
+  ylab = "死傷者数"
+)
+```
+```{r}
+# より見やすく
+autoplot(
+  Seatbelts[, "front"],
+  main = "イギリスの交通事故死傷者数（前席）",
+  xlab = "年",
+  ylab = "死傷者数"
+)
+```
+
+#### 6-16.単位根検定
+- urcaでkpss検定を実装
+
+```{r}
+# 対数に変換しつつ、kpss検定
+summary(ur.kpss(log(Seatbelts[, "front"])))
+```
+```{r}
+# forecastのndiffs関数を使うといくつ階差を取ればいいかがわかる
+ndiffs(log(Seatbelts[, "front"]))
+```
+
