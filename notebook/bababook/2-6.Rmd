@@ -103,7 +103,7 @@ xts_sample["2000-01-02::2000-01-04"]
 - xts型はそうはいかず、少々工夫が必要になる。
 
 ```{r}
-file_data <- read.csv("./data/5-2-1-timeSeries.csv")
+file_data <- read.csv("./book/data/5-2-1-timeSeries.csv")
 file_data
 ```
 ```{r}
