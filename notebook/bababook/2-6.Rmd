@@ -1,8 +1,10 @@
 ---
 title: "6章Rによる時系列の取り扱い"
-site: bookdown::bookdown_site
+author: "Udai Yokoyama"
+date: "2023-01-25"
 output:
-  bookdown::gitbook: default
+  md_document:
+    variant: markdown_github
 ---
 
 ```{r}

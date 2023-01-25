@@ -1,8 +1,10 @@
 ---
 title: "7章　RによるARIMAモデル"
-site: bookdown::bookdown_site
+author: "Udai Yokoyama"
+date: "2023年1月25日"
 output:
-  bookdown::gitbook: default
+  md_document:
+    variant: markdown_github
 ---
 
 ```{r}
