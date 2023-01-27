@@ -64,7 +64,7 @@ $$
 
 ## 3-5.この章で使うパッケージ
 
-```{r results='hide'}
+```{r results='hide', message=FALSE, warning=FALSE}
 library(xts)
 library(fGarch)
 library(rugarch)
