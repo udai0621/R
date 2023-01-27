@@ -1,0 +1,316 @@
+---
+title: "3章　ARCH・GARCHモデルとその周辺"
+author: "Udai Yokoyama"
+date: "2023-01-27"
+output:
+  md_document:
+    variant: markdown_github
+---
+
+## 3-1.なぜ分散の大きさをモデル化したいのか
+
+- 定常過程では分散が一定を仮定されているが、ファイナンス系のデータではそうはいかない。
+- 実際、ファイナンス分野では、それを図る指標として、分散の平方根である標準偏差がある。用語として、”ボラティリティ”という。
+- モチベーションとしては、株式投資時に「最大どれくらい損をする可能性があるのか」というところを図り、リスクマネジメントすること。
+- このボラティリティを予測するモデルのことを、ボラティリティ変動モデルといい、リスク管理に役立つ。
+
+## 3-2.自己回帰条件付き分散不均一モデル(ARCH)
+
+- 最初は、自己回帰条件付き分散不均一モデル(AutoRegressive Conditional Heteroskedasticity model : ARCH)を使う。
+- このモデルは「絶対値が大きなノイズが前回来たらならば、今回の分散は大きくなるだろう」と考えるモデル。
+- これは、「データのブレ幅が広がる状況が持続する」という意味。
+- ARCH(1)は以下のように定式化。
+
+$$
+\begin{align}
+y_t &= \mu_t + u_t\\
+u_t &= \sqrt{h_t}\varepsilon_t ~~~~~~~~~~ \varepsilon_t \sim N(0,1)\\
+h_t &= \omega + \alpha_1u_{t-1}^2
+\end{align}
+$$
+
+- 上記の式を日本語で書き下すと。
+  - $データ = 期待値 + ノイズ$
+  - $ノイズ = \sqrt{条件付き分散} \times 分散1のホワイトノイズ$
+  - $条件付き分散 = \omega + a_1(前期のノイズ)^2$
+- 3つ目の式については、分散であり、その平方根がボラティリティである。
+- そのため、 $\omega, \alpha_1$ は0以上であるという制約が付く。 
+
+## 3-3.一般化ARCHモデル(GARCH)
+- 一般化自己回帰条件付き分散不一致モデル(Generalized ARCH model)
+- 一般化することへのモチベーションは「”より長く”データのブレ幅が広がる状況が持続する」時系列モデルを
+  「少ないパラメータ」で表現したいということ。
+- ARCH(m)の次数を増やすとm時点前までのノイズの大きさが加味されるため、ボラティリティが大きくなる状況は持続される。
+- ただ、その分パラメータが比例的に増えてしまう。
+- そこでGARCH。GARCH(1,1)は以下のように定式化。
+
+$$
+\begin{align}
+y_t &= \mu_t + u_t\\
+u_t &= \sqrt{h_t}\varepsilon_t ~~~~~~~~~~ \varepsilon_t \sim N(0,1)\\
+h_t &= \omega + \alpha_1u_{t-1}^2 + \beta_1h_{t-1}
+\end{align}
+$$
+
+- 上記の式を日本語で書き下すと。
+  - $データ = 期待値 + ノイズ$
+  - $ノイズ = \sqrt{条件付き分散} \times 分散1のホワイトノイズ$
+  - $条件付き分散 = \omega + a_1(前期のノイズ)^2 + \beta_1 \times 前期の条件付き分散$
+  
+## 3-4.GARCHモデルの拡張
+
+- GJR：正のノイズと負のノイズでは、分散に与える影響が異なると考える。
+- 確率分布を正規分布ではなく、t分布に置き換えることでうまくいくこともある。
+
+## 3-5.この章で使うパッケージ
+
+```{r results='hide'}
+library(xts)
+library(fGarch)
+library(rugarch)
+library(forecast)
+library(tseries)
+library(ggplot2)
+library(ggfortify)
+library(gridExtra)
+```
+
+## 3-6.シミュレーションによるデータの作成
+
+```{r}
+# 1回のシミュレーションにおけるサンプルサイズ
+n_sample <- 1000
+
+# GARCH(1,1)に従うデータのシミュレーション
+# モデルのパラメタの設定
+spec1 <- garchSpec(
+  model = list(omega = 0.001, alpha = 0.4, beta = 0.5, mu = 0.1),
+  cond.dist = "norm"
+)
+```
+
+- 以下のモデルが作られる。
+
+$$
+\begin{align}
+y_t &= 0.1 + u_t\\
+u_t &= \sqrt{h_t}\varepsilon_t ~~~~~~~~~~ \varepsilon_t \sim N(0,1)\\
+h_t &= 0.001 + 0.4u_{t-1}^2 + 0.5h_{t-1}
+\end{align}
+$$
+
+```{r}
+# シミュレーションデータを作成
+set.seed(1)
+sim_garch <- garchSim(
+  spec1,
+  n = n_sample,
+  extended = T  # ボラティリティの値を出力
+)
+
+# 作成されたデータの中身を見る
+## ts型に変換
+sim_garch <- ts(sim_garch)
+
+## データの表示
+head(sim_garch, n = 2)
+
+## 図示
+autoplot(sim_garch[, -3], facets = T, ylab = "")
+```
+
+```{r}
+# 原系列のコレログラムを作成
+p_acf <- autoplot(
+  acf(sim_garch[, "garch"], plot = F),
+  main = "原系列のコレログラム"
+)
+
+# 2条した系列のコレログラムの作成
+p_acf_sqrt <- autoplot(
+  acf(sim_garch[, "garch"]^2, plot = F),
+  main = "２条した系列のコレログラム"
+)
+
+# グラフを並べて表示
+grid.arrange(p_acf, p_acf_sqrt, ncol = 1)
+```
+
+- 2条して正負の符号をなくすことで、自己相関を検出できる。
+
+## 3-7.fGarchパッケージによるGARCHモデル
+
+```{r}
+# モデル化
+model_fGarch <- garchFit(
+  formula = ~ garch(1,1),
+  data = sim_garch[, "garch"],
+  include.mean = T,
+  trace = F
+)
+
+# 結果を確認
+coef(model_fGarch)
+```
+
+## 3-8.rugarchパッケージによるGARCHモデル
+
+```{r}
+# モデルの構造の設定
+spec_rugarch1 <- ugarchspec(
+  variance.model = list(model = "sGARCH", garchOrder = c(1,1)),
+  mean.model = list(armaOrder = c(0,0), include.mean = TRUE),
+  distribution.model = "norm"
+)
+
+# モデルの推定
+model_rugarch <- ugarchfit(
+  spec = spec_rugarch1, 
+  data = sim_garch[, "garch"], 
+  solver = 'hybrid'
+)
+
+# 結果の確認
+coef(model_rugarch)
+```
+
+## 3-9.ARMA-GARCHモデルの作成
+
+- 期待値が一定であるという前提でモデルを組んでいた。
+- しかし、ARMAモデルのように「前の時点の値によって期待値が変わる」構造になることもある。
+
+```{r}
+# モデルのパラメータの設定
+spec2 <- garchSpec(
+  model = list(
+    omega = 0.001, alpha = 0.5, beta = 0.4,
+    mu = 0.1, ar = -0.6, ma = -0.5
+  ),
+  cond.dist = "norm"
+)
+
+# シミュレーションデータの生成
+set.seed(0)
+sim_arma_garch <- garchSim(
+  spec2,
+  n = n_sample,
+  extended = F
+)
+```
+
+```{r}
+# ARMA(1,1)モデル
+model_arma <- Arima(sim_arma_garch, order = c(1,0,1))
+
+# 残差のチェック
+checkresiduals(model_arma)
+jarque.bera.test(model_arma$residuals)
+```
+
+- Ljung-Box test も jarque.bera.test もともに有意となった。
+- つまり、残差には自己相関があり、正規分布には従わないということ。->❌
+
+```{r}
+# モデルの構造の設定
+spec_rugarch2 <- ugarchspec(
+  variance.model = list(model = "sGARCH", garchOrder = c(1,1)),
+  mean.model = list(armaOrder=c(1,1), include.mean=TRUE),
+  distribution.model = "norm"
+)
+
+# モデルの推定
+model_arma_garch <- ugarchfit(
+  spec = spec_rugarch2, data = sim_arma_garch, solver = 'hybrid'
+)
+
+# 結果の確認
+coef(model_arma_garch)
+```
+
+```{r}
+# 標準化残差：ARMA+GARCH
+residuals_arma_garch <- residuals(model_arma_garch) / sigma(model_arma_garch)
+
+# 標準化残差：ARMA
+residuals_arma <- model_arma$residuals / sqrt(model_arma$sigma2)
+
+# データをまとめる
+d <- data.frame(
+  arma_garch = residuals_arma_garch,
+  arma = residuals_arma
+)
+
+# 図示
+autoplot(ts(d), facets = T, ylab = "", main = "標準化残差")
+```
+
+## 3-10.RによるGJRモデル
+
+- GJRモデル(正と負のノイズに違い)の推定。
+- データspyreal：アメリカの株式インデックスデータ
+
+```{r}
+data("spyreal")
+
+tail(spyreal, n=2)
+```
+
+```{r}
+# モデルの構造指定
+spec_rugarch3 <- ugarchspec(
+  variance.model = list(model="gjrGARCH", garchOrder=c(1,1)),
+  mean.model     = list(armaOrder=c(1,1)),
+  distribution.model = "std"  # 確率分布をt分布に変更
+)
+
+# GJR GARCHの推定
+model_gjr <- ugarchfit(
+  spec = spec_rugarch3,
+  data = spyreal[,1],
+  solver = 'hybrid'
+)
+
+# 結果の確認
+coef(model_gjr)
+```
+
+- gamma1が負のノイズが入った時にかかる影響を表すパラメータ。
+- 正の値となっていることは、負のノイズが加わると、正のノイズよりもボラティリティが大きくなるということ。
+
+- このガンマの影響度を確かめるためにAICを用いる。
+
+```{r}
+# 普通のGARCHモデルの作成
+spec_rugarch4 <- ugarchspec(
+  variance.model = list(model="sGARCH", garchOrder=c(1,1)),
+  mean.model     = list(armaOrder=c(1,1)),
+  distribution.model = "std"
+)
+
+# モデルの推定
+model_standard_garch <- ugarchfit(
+  spec = spec_rugarch4, data = spyreal[,1], solver = 'hybrid'
+)
+
+# AICの比較
+infocriteria(model_gjr)["Akaike",]
+infocriteria(model_standard_garch)["Akaike",]
+```
+
+- 推定されたボラティリティの変動を図示
+
+```{r}
+# データをまとめる
+d_xts <- spyreal[,1]
+d_xts$volatility <- sigma(model_gjr)
+
+# 図示
+autoplot(d_xts, facets = T, ylab = "")
+```
+
+```{r}
+# 50時点先まで予測をする場合
+pred <- ugarchboot(model_gjr, n.ahead = 50, method = "Partial")
+pred
+```
+
