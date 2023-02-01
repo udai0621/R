@@ -257,7 +257,7 @@ P_smooth[N+1]  <- P_filter[N+1]
 - for文で時点をずらしながら、平滑化関数を実行していく。
 - 未来から過去へ計算が進んでいくことに注意
 
-```{r}
+```{r warning=FALSE}
 for(i in N:1){
   
   kekka <- smoothLocalLevel(
