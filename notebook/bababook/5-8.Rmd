@@ -1,0 +1,292 @@
+---
+title: '8章　実装：KFASの使い方'
+author: 'Udai Yokoyama'
+date: '2023-02-02'
+output:
+  md_document:
+    variant: markdown_github
+---
+
+## 8-1.この章で使うパッケージ
+
+```{r message=FALSE}
+library(KFAS)
+library(ggplot2)
+```
+
+## 8-2.分析の対象となるデータ
+
+```{r}
+# 1870~1970年のうち、1950年までの80年間をtrain用とする
+nile_train <- window(Nile, end=1950)
+
+# 途中の20年間に欠損があるように加工する
+nile_train[41:60] <- NA
+```
+
+## 8-3.KFASによる線形ガウス状態空間モデルの推定
+
+-   状態空間モデルでは、欠損があったとしても、モデリングが可能
+
+```{r}
+# Step1 モデルの構造を決める
+build_kfas <- SSModel(
+  H = NA,
+  nile_train ~ SSMtrend(degree = 1, Q = NA)
+)
+
+# Step2 パラメタの推定
+fit_kfas <- fitSSM(build_kfas, inits = c(1,1))
+
+# Step3,4 フィルタリング・スムージング
+result_kfas <- KFS(
+  fit_kfas$model,
+  filtering = c("state", "mean"),
+  smoothing = c("state", "mean")
+)
+```
+
+#### Step1 モデルの構造を決める
+
+-   状態方程式、観測方程式によりモデルの構造を指定。
+-   SSModel()を使用
+-   Hは観測誤差の分散、Qは過程誤差の分散を表す。
+-   "H = NA"であれば、不明な値であるとみなして、パラメタ推定を行なってくれる。
+-   SSMtrendでトレンドモデルを選定。次数(degree=1)でローカルレベルモデルを指定している。
+
+##### 各種関数
+
+-   SSMtrend
+
+    -   degree=1:ローカルレベルモデル、degree=2:ローカル線形トレンドモデル
+
+    -   ex.) SSMtrend(degree = 2, c(list(NA), list(NA)))
+
+-   SSMseasonal
+
+    -   季節変動を表すことが可能。
+    -   period=12:月単位データのように、12ヶ月周期
+    -   sea.type='dummy':ダミー変数を用いる。/ ='trigonometric':三角関数を用いる
+    -   ex.) SSMseasonal(period=12, sea.type='dummy', Q=NA)
+
+-   SSMregression
+
+    -   外生変数を組み込むことが可能。時変係数のモデルにも対応。
+    -   ex.) SSMregression( \~ 外生変数, Q=NA)
+
+-   SSMarima
+
+    -   ARIMAモデルと同等のモデルを推定することが可能。
+
+-   複数の要素が入ったモデルを作成することも可能
+
+    build_sample \<- SSModel(
+
+        H = NA, 
+
+        対象データ ~ 
+
+          SSMtrend(degree=1, Q=NA) +
+
+          SSMregression(~ 外生変数, Q=NA)
+
+    )
+
+#### Step2 パラメタ推定
+
+- fitSSM関数で最尤法によるパラメタ推定。
+- 'inits = c(1,1)' は初期値
+- 状態の初期値には散漫初期化という方法があったが、パラメタの場合は勘。
+- 複雑なモデルになってくると初期値への依存性も出てくる。
+- 推定結果については、'＄optim.out'と'＄model'に分かれる
+
+    - '$optim.out':推定されたパラメタ
+    - '$model':最適なパラメタを用いて組み直されたモデル　→ dlmと違い、自身で組み直す必要はない。
+    
+```{r}
+# 観測誤差の分散
+fit_kfas$model$H
+
+# 過程誤差の分散
+fit_kfas$model$Q
+
+```
+
+#### Step3,4 フィルタリング、スムージング
+
+- フィルタリングと平滑化は同時に実行可能。
+- フィルタリングのみの場合は、'smoothnig="none"'というフラグ立てで対応
+
+```{r}
+# フィルタ化推定量
+mu_filter_kfas <- result_kfas$a[-1]
+
+# 平滑化状態
+mu_smooth_kfas <- result_kfas$alphahat
+```
+
+- [-1]で切り捨てられている点は、初期値。
+
+## 8-4.推定結果の図示
+
+```{r}
+df_filter <- data.frame(
+  y         = as.numeric(Nile[1:80]),
+  time      = 1871:1950,
+  mu_filter = mu_filter_kfas
+)
+
+ggplot(data = df_filter, aes(x=time, y=y)) +
+  labs(title = 'フィルタ化推定量') +
+  geom_point(alpha = 0.6) +      # 観測値の散布図
+  geom_line(aes(y = mu_filter),  # フィルタ化推定量の折れ線図
+  size = 1.2
+  )
+```
+
+- 1910~1930までは状態がずっと同じになっているが、それは欠損値によるもの。
+
+## 8-5.KFASによる状態の推定と信頼・予測区間
+
+- 平滑化状態と、その信頼区間、予測区間を求める。（以下は厳密な定義ではなく、イメージレベル）
+
+    - 信頼区間：状態がこの間に収まるだろう区間
+    - 予測区間：観測値がこの間に収まるだろう区間（観測誤差の大きさも加味される）
+    
+- predict()で信頼区間を求める。'interval="confidence"'と指定。'level=0.95'で95%信頼区間。
+
+```{r}
+smooth_conf <- predict(
+  fit_kfas$model,
+  interval = "confidence",
+  level = 0.95
+)
+
+# 結果の確認
+head(smooth_conf, n=3)
+```
+
+- 予測区間の場合は、'interval = "prediction"'に変えるだけ。
+
+```{r}
+smooth_pred <- predict(
+  fit_kfas$model,
+  interval = "prediction",
+  level = 0.95
+)
+
+# 結果の確認
+head(smooth_pred, n=3)
+```
+
+## 8-6.KFASによる予測
+
+- 'n.ahead = 20'と指定することで、20時点先まで予測する。
+
+```{r}
+forecast_pred <- predict(
+  fit_kfas$model,
+  interval = 'prediction',
+  level = 0.95,
+  n.ahead = 20
+)
+
+# 平滑化状態と予測結果を結合
+estimate_all <- rbind(smooth_pred, forecast_pred)
+
+# 図示するためのデータ加工
+df_forecast <- cbind(
+  data.frame(y = as.numeric(Nile), time = 1871:1970),
+  as.data.frame(estimate_all)
+)
+
+# 図示
+ggplot(data = df_forecast, aes(x = time, y= y)) + 
+  labs(title = '平滑化状態と将来予測') +
+  geom_point(alpha = 0.5) +
+  geom_line(aes(y = fit), size = 1.2) +
+  geom_ribbon(aes(ymin = lwr, ymax = upr), alpha = 0.3)
+```
+
+- 8-7.補足：ローカルレベルモデルにおける予測
+
+```{r}
+tail(smooth_pred, n = 1)
+
+head(forecast_pred, n = 5)
+```
+
+- 'se.fit=T'と指定すると、予測区間の標準偏差を取得できる。
+
+```{r}
+forecast_se <- predict(
+  fit_kfas$model,
+  interval = 'prediction',
+  level = 0.95,
+  n.ahead = 20,
+  se.fit = T
+)[, 'se.fit']
+
+forecast_se
+```
+```{r}
+# 2乗だと分散
+forecast_se^2
+```
+
+```{r}
+# 差分を取ると、分散は毎時点2489.915ずつ増えていることがわかる。
+diff(forecast_se^2)
+```
+
+```{r}
+# 分散の増加量は「過程誤差の分散」の値と一致する。
+fit_kfas$model$Q
+```
+
+- つまり、過程誤差が積み重なっていくため、長期の予測は当たりにくくなる。
+
+## 8-8.補足：補間と予測の関係
+
+- 状態空間モデルでは、欠測値の補間と未来の予測は全く同じ枠組み
+
+```{r}
+# 未来の値をNAとしたもの
+nile_na <- Nile
+nile_na[81:100] <- NA
+
+build_kfas_na <- SSModel(
+  H = NA,
+  nile_na ~ SSMtrend(degree = 1, Q = NA)
+)
+
+fit_kfas_na <- fitSSM(build_kfas_na, inits = c(1,1))
+
+# 未来の値を切り捨てたもの
+nile_split <- window(Nile, end = 1950)
+
+build_kfas_split <- SSModel(
+  H = NA,
+  nile_split ~ SSMtrend(degree = 1, Q = NA)
+)
+
+fit_kfas_split <- fitSSM(build_kfas_split, inits = c(1,1))
+
+
+# 補間と予測の結果が一致するか確認
+hokan <- predict(
+  fit_kfas_na$model,
+  interval = "confidence",
+  level = 0.95
+)[81:100,]
+
+yosoku <- predict(
+  fit_kfas_split$model,
+  interval = "confidence",
+  level = 0.95,
+  n.ahead = 20
+)
+
+all(hokan == yosoku)
+```
+
