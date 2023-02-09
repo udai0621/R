@@ -1,0 +1,312 @@
+---
+title: "実装：Stanの使い方"
+author: "Udai Yokoyama"
+date: "2023-02-07"
+output:
+  md_document:
+    variant: markdown_github
+---
+
+## 3-1.Stanのインストール
+
+-   下記コマンドでインストール。
+
+-   install.packages('rstan',repos='<https://cloud.r-project.org/>', dependencies=TRUE)
+
+## 3-2.この章で使うパッケージ
+
+```{r message=FALSE}
+library(rstan)
+library(ggplot2)
+```
+
+-   Stanの計算速度を速くする設定。
+
+```{r}
+rstan_options(auto_write = TRUE)
+options(mc.cores = parallel::detectCores())
+```
+
+## 3-3.シミュレーションデータの作成
+
+-   今回はローカルレベルモデルに従うシミュレーションデータを生成。
+
+```{r}
+# data
+n_sample <- 100                # サンプルサイズ
+y        <- numeric(n_sample)  # 観測値
+
+# parameters
+mu_zero <- 100                 # 状態の初期値
+mu      <- numeric(n_sample)   # 状態の推定値
+s_w     <- 1000                # 過程誤差の分散
+s_v     <- 5000                # 観測誤差の分散
+```
+
+-   分析対象となるデータをシミュレーション作成。（このコードは非効率。理由があるらしい。）
+
+```{r}
+set.seed(1)
+
+# 状態の初期値から最初の時点の状態が得られる
+mu[1] <- rnorm(n=1, mean = mu_zero, sd = sqrt(s_w))
+
+# 状態方程式に従い、状態が遷移する。
+for(i in 2:n_sample) {
+  mu[i] <- rnorm(n = 1, mean = mu[i-1], sd = sqrt(s_w))
+}
+
+# 観測方程式に従い、観測値が得られる
+for(i in 1:n_sample) {
+  y[i] <- rnorm(n = 1, mean = mu[i], sd = sqrt(s_v))
+}
+```
+
+-   1時点目の状態muは、状態の初期値mu_zeroに過程誤差が加わったものとして得られる。
+-   2時点目以降は、前時点の状態に過程誤差が加わったもの。
+-   観測値は同じ時点における状態に、観測誤差が加わったもの。
+
+## 3-4.Stanファイルの記述
+
+-   Rstudioのメニューから「File -\> New File -\> TextFile」の順に選択。新しいファイルを作成。
+
+-   ファイル名「6-3-local-level-model.stan」
+
+    -   data{ // 使用されるデータを記述}
+    -   parameters{ // 推定される状態・パラメタの一覧を記述}
+    -   model{ // データ生成過程を記述}
+
+## 3-5.dataブロックの指定
+
+-   dataブロックには、「データを変えた時に変更される変数」を指定。
+
+1.  変数の「型」をあらかじめ宣言する。
+
+    1.1 int：整数型 1.2 real：実数型
+
+         1.2.1 y[n_sample] ：長さが n_sample である配列。int型も配列可能。
+
+2.  行末にはセミコロンをつける。
+
+3.  コメントアウトは'//'
+
+## 3-6.parametersブロックの指定
+
+-   parametersブロックには、推定される状態やパラメタが格納される変数を定義。
+-   \<lower=0\>：最小値を0とする。分散が0未満ということはあり得ないため、指定。
+
+## 3-7.modelブロックの指定
+
+-   modelブロックには、データ生成過程を記述。
+-   "="ではなく、"\~"を用いる。どの確率分布に従ってデータが生成されているかということ。
+-   特に指定をしない場合は、事前分布として無情報事前分布が使用される。
+
+## 3-8.データ生成過程(GDP)とStanの関係
+
+-   シミュレーションデータについては、Stanのコードに寄せて記述してあるため、 ほとんど一緒。
+
+-   Stanは確率的プログラミング言語の一種らしい。
+
+-   Stanによって、「どの変数が、どのような確率分布に従って生成されているか」を そのまま記述して、モデルを構築できる。
+
+-   データを確率変数とみなして、確率変数の従う確率分布を推定することこそが、 未来のデータを推測するという、推測統計学の枠組み。
+
+## 3-9.Stanによるローカルレベルモデルの推定
+
+```{r warning=FALSE}
+# データの準備
+data_sim <- list(y = y, n_sample = n_sample)
+
+# モデルの推定
+fit_stan_1 <- stan(
+  file = "6-3-local-level-model.stan",
+  data = data_sim,
+  iter = 550,
+  warmup = 50,
+  thin = 1,
+  chains = 4,
+  seed = 1
+)
+```
+
+-   この方法だと、あまりうまくはいかないらしい。
+
+-   dataブロックに格納する変数をlist形式でStan関数に渡す。
+
+-   Stan関数の引数の説明は以下の通り。
+
+    -   file：Stanファイルのファイル名
+    - data：list形式でまとめられれたstanとdataブロックに格納する変数
+    - iter：繰り返し数。乱数を生成する回数の指定。
+    - warmup：生成された乱数を切り捨てる期間。
+      乱数を生成する際、乱数の初期値にある程度依存している。その依存性を下げるために、
+      最初からどれくらいの長さ分切り捨てるのかを指定する。
+    - thin：間引き数
+      "thin=2"なら、2個に1個間引きをする。"thin=5"だと、5個のうち4個が間引きされる。
+      行う理由としては、1ステップ前の乱数と似てしまう可能性があり、似たような乱数が採用されてしまうため。
+    - chains：「iter回の乱数生成」を行う回数
+      得られた乱数の値を信用しても良いのかを確認するために、「iter回の乱数生成」を何度も繰り返し、
+      実行。毎回異なる乱数が生成された時、EAP推定量が100になったり、1億になったりするのは問題。
+      これが問題なければ収束したということになり、chainごとに混じり合うようにらんんすうが生成されて
+      いれば、収束したとみなす。定量的に捉えるなら、$\hat R$という指標。"1.1"未満かどうかが判断基準で、
+      それ未満ならパラメタが収束したと見做せる。
+    - seed：いつものやつ。ほとんど必須の引数。
+    
+- Stanは状態空間モデルを推定する上では、高速なソフトウェアである。
+- C++で書かれていること、HMC法を用いていることが理由として挙げられる。
+- [rstan_options(auto_write=TRUE)]：再コンパイルしないように、コンパイル後のStanプログラムを保存しておく。
+- [options(mc.cores = parallel::detectCores())]：並列化演算の設定。
+
+## 3-10.結果の出力と収束の判定
+
+- 得られた乱数の要約を見るには、以下のコード。
+
+```{r}
+options(max.print = 100000)
+print(fit_stan_1)
+```
+
+- 抽出する範囲を設定することも可能。（無駄を省く）
+
+```{r}
+print(
+  fit_stan_1,                       # 推定結果
+  digits = 1,                       # 小数点桁数
+  pars   = c("s_w", "s_v", "lp__"),  # 表示するパラメタ
+  probs  = c(0.025, 0.5, 0.975)     # 区間幅の設定
+)
+
+```
+
+- n_eff：有効サンプルサイズ。生成された乱数のうち、前の値に引きずられていない乱数の個数。100個以上が望ましい。
+- Rhat：収束の判定に用いられる指標。1.1未満が求められる。
+- lp__：対数事後確率。収束していることが求められる。
+- 上記2つの指標については、どちらとも満たしていないという結果。推定のし直しが必要。
+
+- cainごとに乱数を図示することで、結果が収束していないことがわかる。
+
+```{r}
+traceplot(fit_stan_1, pars = c("s_w", "s_v"))
+```
+
+## 3-11.収束を良くするための調整
+
+- "iter"と"warmup"を増やすこと。間引きを適応すること。
+- この際、Stanファイルの変更は不要。
+- また、コンパイルも不要なため、計算時間は短くなる。
+
+```{r}
+fit_stan_2 <- stan(
+  file = "6-3-local-level-model.stan",
+  data = data_sim,
+  iter = 5000,
+  warmup = 2500,
+  thin = 5,
+  chains = 4,
+  seed = 1
+)
+```
+
+```{r}
+# 図示
+traceplot(fit_stan_2, pars = c("s_w", "s_v"))
+```
+
+```{r}
+# 乱数の要約
+print(
+  fit_stan_2,
+  digits = 1,
+  probs = c(0.025, 0.5, 0.975)
+)
+
+```
+
+- Rhat,n_effともに、改善された。
+- iter,warmup,thinについては、試行錯誤的に決めていく。
+- chainsは固定で問題ない。
+
+## 3-12.ベクトル化による効率的な実装
+
+- Stanファイルを書き換えた。→for文の撤廃→ベクトル化
+
+## 3-13.乱数として得られた多数のパラメタの取り扱い
+
+- サンプリングされた乱数の取り扱いを学ぶ。
+- 1つ1つのパラメタの事後分布は、その事後分布に従う乱数として得られる。
+
+```{r}
+sampling_result <- rstan::extract(fit_stan_2)
+
+# 過程誤差の分散の乱数は、2000個得られたことがわかる
+length(sampling_result$s_w)
+```
+
+- この結果については、以下のロジック。
+
+```{r}
+iter <- 5000
+warmup <- 2500
+thin <- 5
+chains <- 4
+((iter-warmup)/thin)*chains
+```
+
+- 2000個の乱数を用いて、平均値をとり、EAP推定量を求める。
+
+```{r}
+mean(sampling_result$s_w)
+```
+
+- 95％区間と中央値を求める。
+
+```{r}
+quantile(sampling_result$s_w, probs = c(0.025, 0.5, 0.975))
+```
+
+- 最後に事後分布を図示。乱数のヒストグラムがそれにあたる。
+
+```{r}
+ggplot(data.frame(s_w = sampling_result$s_w), aes(x = s_w)) +
+  geom_histogram()
+```
+
+## 3-14.推定結果の図示
+
+```{r }
+# 1時点目の状態の乱数の取得。2,000サンプル。
+sampling_result$mu[, 1]
+```
+
+```{r}
+# サンプリング結果の取得
+model_mu <- t(apply(
+  X = sampling_result$mu,       # 実行対象となるデータ
+  MARGIN = 2,                   # 列を対象としてループ
+  FUN = quantile,               # 実行対象となる関数
+  probs = c(0.025, 0.5, 0.975)  # 上記関数にいれる引数
+  ))
+
+colnames(model_mu) <- c("lwr", "fit", "upr")  # 列名の変更
+```
+
+- apply(MARGIN=2)：行列形式のデータを対象として、全ての列ごとに関数を適用する。
+- t()：行列の行と列を入れ替える指定。
+- このデータを用いて、推定結果を図示する。
+
+```{r}
+#　データの整形
+stan_df <- cbind(
+  data.frame(y = y, time = 1:n_sample),
+  as.data.frame(model_mu)
+)
+
+# 図示
+ggplot(data = stan_df, aes(x = time, y = y)) +
+  labs(title = "Stanによる推定結果") +
+  geom_point(alpha = 0.6, size = 0.9) +
+  geom_line(aes(y = fit), size = 1.2) +
+  geom_ribbon(aes(ymin = lwr, ymax = upr), alpha = 0.3)
+```
+
+- 実線は「平滑化された状態」/網掛けは「状態の95％信頼区間」と同じ意味を持つ。

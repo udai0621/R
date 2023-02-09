@@ -1,0 +1,252 @@
+---
+title: "4章　応用：複雑な観測方程式を持つモデル"
+author: "Udai Yokoyama"
+date: "2023-02-07"
+output:
+  md_document:
+    variant: markdown_github
+---
+
+この章ではポアソン分布に従う観測値を対象とする。
+
+ポアソン分布は、個体数や売上個数など、正の整数しかとらないデータに対して、 よく適用される確率分布。
+
+## 4-1.この章で使うパッケージ
+
+```{r message=FALSE}
+library(rstan)
+library(ggplot2)
+library(ggfortify)
+```
+
+```{r}
+rstan_options(auto_write = TRUE)
+options(mc.cores = parallel::detectCores())
+```
+
+## 4-2.テーマ①　最適な捕獲頭数を求めたい
+
+-   動物の個体数の調査データを対象。
+
+    -   この動物は放っておくとひたすら増加する。
+    -   そのため、大規模な駆除が数回行われている。
+    -   ただし、在来種のため、絶滅させるわけにもいかない。
+
+-   以上から、個体数が増えも減りもしない、ちょうど良い捕獲頭数の算出を目指す。
+
+## 4-3.データの特徴
+
+```{r}
+data_file <- read.csv("./data/6-4-animal_catch_data.csv")
+head(data_file, n = 3)
+```
+
+-   1年に1回、生物の個体数"y"と捕獲数"catch_y"が記録されたデータ。
+-   ts型に変換し、図示する。
+
+```{r}
+# ts型に変換
+data_ts <- ts(data_file[, -1], start = 1911, frequency = 1)
+
+# 図示
+autoplot(data_ts)
+```
+
+-   大規模な駆除は計3回。
+-   駆除が行われている間は個体数が減少している。
+-   駆除対象は、子供を持つ親のため、増加トレンドを抑えることに成功している。
+-   このデータは、「増加トレンド\~大規模な駆除」を繰り返すことが原因の大きな変化と細かいノイズで構成されている。
+-   これは、調査方法に問題。遠くから双眼鏡を用いての計測だが、観測場所、調査者の計測能力といったムラが発生している。
+
+## 4-4.モデルの構造を決める
+
+-   モデルの検討。
+
+    -   放っておくと個体数は増加する→トレンドがあるモデルが望ましい
+    -   駆除しない限りはずっと増えるので、上昇トレンドの大きさは一定と仮定する。
+    -   ただし、駆除イベントがあると、下降トレンドに変化。
+    -   変化の大きさは、駆除された個体数によって変わる。
+
+-   以上から、まずは、「ローカル線形トレンドモデル」を改造した以下のモデルを想定。
+
+    -   $\sigma_t$は$t$時点のトレンド。
+    -   $Trend$は上昇トレンドの大きさ。(時点によらず一定)
+    -   $Coef_{catch}$は捕獲数がトレンドに与える影響を表す係数。(時点によらず一定)
+    -   $Catch_t$は$t$時点の捕獲数。
+    -   $\mu_t$は$t$時点の個体数の水準値(状態)。
+    -   $y_t$は$t$時点の観測された個体数。
+    -   $w_t, v_t$は各々$t$時点の過程誤差と観測誤差。
+
+$$
+\begin{align}
+\delta_t &= Trend - Coef_{catch} \times Catch_t\\
+\mu_t &= \mu_{t-1} + \delta_{t-1} + w_t, ~~~~~ w_t \sim N(0,\sigma_w^2) \\
+y_t &= \mu_t + v_t, ~~~~~~~~~~~~~~~~~~~~~~ v_t \sim N(0,\sigma_v^2)
+\end{align}
+$$
+
+## 4-5.ポアソン分布＋ランダムエフェクト
+
+- 観測値$y_t$がポアソン分布に従っていると仮定。
+- 先ほどの状態方程式・観測方程式を変更。
+
+$$
+\begin{align}
+\delta_t &= Trend - Coef_{catch} \times Catch_t\\
+\mu_t &= \mu_{t-1} + \delta_{t-1} + w_t, ~~~~~ w_t \sim N(0,\sigma_w^2) \\
+\lambda_t &= \exp(\mu_t) \\
+y_t &\sim Poisson(\lambda_t)
+\end{align}
+$$
+
+- ポアソン分布は期待値も分散も1つのパラメタ$\lambda$である。
+- $\lambda$として$\exp(\mu_t)$を指定。
+- ポアソン分布に従う値が負になることが無い(個体数がマイナスになることはない)。
+
+- データに大きなノイズが見られたので、観測誤差をさらに追加。
+
+$$
+\begin{align}
+\delta_t &= Trend - Coef_{catch} \times Catch_t\\
+\mu_t &= \mu_{t-1} + \delta_{t-1} + w_t, ~~~~~ w_t \sim N(0,\sigma_w^2) \\
+\mu\_{noise_t} &= \mu_t + v_t,~~~~~~~~~~~~~~~~~~~~~~ v_t \sim N(0,\sigma_v^2) \\
+\lambda_t &= \exp(\mu\_{noise_t}) \\
+y_t &\sim Poisson(\lambda_t)
+\end{align}
+$$
+
+- $\mu\_noise_t$は$t$時点の観測誤差の加わった個体数の水準値。
+
+- 観測誤差を認めつつ、観測値がポアソン分布に従うモデルを作成する。
+
+- 水準値に観測誤差を組み込んだが、一般化線形混合モデルにおいてランダムエフェクトと呼ばれる項と
+  同じ意味を持つ。
+  
+- ポアソン分布は期待値と分散が等しい。→「期待値が決まると分散が自動的に定まってしまう」
+
+- 分散を別途増やす場合はモデル化が必要。
+
+$$
+\begin{align}
+\delta_t &= Trend - Coef_{catch} \times Catch_t\\
+\mu_t &\sim N(\mu_{t-1} + \delta_{t-1}, \sigma_w^2) \\
+\mu\_{noise_t} &\sim N(\mu_t,\sigma_v^2) \\
+\lambda_t &= \exp(\mu\_{noise_t}) \\
+y_t &\sim Poisson(\lambda_t)
+\end{align}
+$$
+
+## 4-6.stanファイルの記述
+
+- data,parameters,modelブロックに追加して、以下の2つのブロックを指定。
+
+#### transformed parametersブロック
+
+- "~"は確率分布に従うの意であり、modelブロックに記載する内容。
+- "="は単なるパラメタの変換を表す。これは、transformed parametersブロックに記載する。
+- modelブロック：ランダム性があるもの / transformed parametersブロック：ランダム性がないもの
+
+#### generated quantitiesブロック
+
+- モデルを推定するならば不要だが、別の目的で推定したい値を記載する場所。
+  →状態方程式・観測方程式には現れないものを指す。
+  
+- 今回の例題の場合、「観測誤差が大きい」という課題があったため、
+  「観測誤差がなかったと仮定した時の水準値」についても調査をしてみる。
+  
+- これを行うことで、データが平滑化され、個体群の増減の様子が明瞭になるはず。
+
+## 4-7~11.Stanファイルの記載
+
+- ファイル名：6-4-count-model.stan
+- 可読性担保のため、ベクトル化は行っていない。
+
+## 4-12.stanによるモデルの推定
+
+```{r include=FALSE, warning=FALSE, message=FALSE}
+# データの準備
+data_stan <- list(
+  y = data_file$y,
+  catch_y = data_file$catch_y,
+  n_sample = nrow(data_file)
+)
+
+# モデルの推定
+fit_stan_count <- stan(
+  file = "6-4-count-model.stan",
+  data = data_stan,
+  iter = 8000,
+  thin = 10,
+  chains = 4,
+  seed = 1
+)
+```
+
+## 4-13.推定されたパラメタの確認
+
+```{r}
+# 結果の確認
+options(max.print = 1000)
+print(fit_stan_count, probs = c(0.25, 0.5, 0.975), digits = 1)
+```
+
+- 最適な捕獲数、駆除がもたらす影響を確認
+
+```{r}
+print(
+  fit_stan_count,
+  digits = 2,
+  probs = c(0.025, 0.5, 0.975),
+  pars = c("trend", "coef_catch_y", "best_catch_y")
+)
+```
+
+- best_catch_yの結果より、約11頭/年を捕獲すると、個体数の安定が見込める。
+- 95%信頼区間を考慮すると、約9~14頭/年で調整するというのもあり。
+
+## 4-14.平滑化された個体数の図示
+
+- 平滑化された個体数を図示。
+
+```{r}
+# 観測誤差を取り除いた状態の、95%信頼区間と中央値を抽出
+sampling_result <- rstan::extract(fit_stan_count)
+
+model_lambda_smooth <- t(apply(
+  X = sampling_result$lambda_smooth,
+  MARGIN = 2,
+  FUN = quantile,
+  probs=c(0.025, 0.5, 0.975)
+))
+
+colnames(model_lambda_smooth) <- c("lwr", "fit", "upr")
+```
+
+```{r}
+# データ整形
+stan_df <- cbind(
+  data.frame(y = data_file$y, time = data_file$time),
+  as.data.frame(model_lambda_smooth)
+)
+
+# 図示
+ggplot(data = stan_df, aes(x = time, y = y)) +
+  labs(title = "観測誤差を取り除いた個体数の変動") +
+  geom_point(alpha = 0.6, size = 0.9) +
+  geom_line(aes(y = fit), size = 1.2) +
+  geom_ribbon(aes(ymin = lwr, ymax = upr), alpha = 0.3)
+```
+
+## 4-15.検討事項
+
+- 駆除数はトレンドではなく水準値そのものに影響を及ぼすのではないか？
+
+    - 最適駆除数は一定ではなくなり、その時の個体数に合わせて変化させる必要がある。
+    - トレンドと水準の両方に影響を及ぼしている可能性。
+    
+- 放っておけば無限に増殖するという前提は正しいか
+
+    - ローカル線形トレンドモデルのように変化するトレンドの検討。
+    - 密度効果等を検討すべきかもしれない。
+    
+  

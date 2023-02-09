@@ -1,0 +1,196 @@
+---
+title: "5章　応用：非線形な状態方程式を持つモデル"
+author: "Udai Yokoyama"
+date: "2023-02-09"
+output:
+  md_document:
+    variant: markdown_github
+---
+
+## 5-1.この章で使うパッケージおよび設定
+
+```{r message=FALSE}
+library(rstan)
+library(ggplot2)
+library(ggfortify)
+```
+
+```{r}
+rstan_options(auto_write=TRUE)
+options(mc.cores = parallel::detectCores())
+```
+
+## 5-2.テーマ② 密度効果をモデル化する
+
+-   生物の個体数は、ある一定量で頭打ちになることがある。
+-   個体数が増えることで、餌がなくなったり、糞等で環境が悪化するため。
+-   個体数が増えすぎると自動的に増加にストップがかかることを「負の密度効果」という
+-   密度効果については研究がされており、その知見をデータ分析に活用しようというのが この章のテーマ。
+
+## 5-3.データの特徴
+
+-   1回/年、生物の個体数yを記録した架空のデータ。（50年分）
+
+```{r}
+data_file <- read.csv("./data/6-5-logistic-growth-data.csv")
+head(data_file, n=3)
+```
+
+-   図示してみると、右肩上がりのトレンドがあるようにも見えるし、400あたりで安定しているようにも見える。
+
+```{r}
+# ts型に変換
+data_ts <- ts(data_file[, -1], start = 1961, frequency = 1)
+# 図示
+autoplot(data_ts)
+```
+
+## 5-4.ロジスティック増殖曲線
+
+-   離散時間のロジスティック増殖曲線は以下のように定式化。
+
+    - $N_t$：$t$時点の生物の個体数
+    - r：内的自然増加率
+    - K：環境収容力
+
+$$
+N_t = N_{t-1} + rN_{t-1}\bigg(1 - \frac{N_{t-1}}{K} \bigg)
+$$
+
+- ロジスティック増殖曲線は個体群生態学では標準的なモデル。
+- 上記式のような形式を"差分方程式"と呼ぶ。
+
+    - 差分方程式：時間を経るにつれ、どのように個体数が変化していくかをみるのに便利。
+    - $N_t = N_{t-1}$：前年の個体数と変化なし。
+    - $N_t = N_{t-1} + rN_{t-1}$：一定の増加率(内的自然増加率)で個体が増えていくことを表す。
+    - $N_{t-1}>K$：前年個体数が環境収容力を上回ると、$rN_{t-1}(1-N_{t-1}/K)<0$となる。つまり、前年よりも個体数は減少する。
+
+- 個体数が増えれば増えるほど、負の密度効果が働いて、増加率が減少していく。
+  これを表現したものがロジスティック増殖曲線である。状態空間モデルの式で表すと以下となる。
+  
+$$
+\begin{align}
+\mu_t &= \mu_{t-1} + r\mu_{t-1}\bigg( 1 - \frac{\mu_{t-1}}{K} \bigg) + w_t, ~~~~~ w_t \sim N(0,\sigma_w^2) \\
+\lambda_t &= \exp(\mu_t) \\
+y_t &\sim Poisson(\lambda_t)
+\end{align}
+$$
+
+- 過程誤差が加わったモデルとして表現されている。
+- 「確率分布に従う」という形式にする。
+
+$$
+\begin{align}
+\mu_t &\sim N(\mu_{t-1} + r\mu_{t-1}\bigg( 1 - \frac{\mu_{t-1}}{K} \bigg),\sigma_w^2) \\
+\lambda_t &= \exp(\mu_t) \\
+y_t &\sim Poisson(\lambda_t)
+\end{align}
+$$
+
+## 5-5.弱情報事前分布
+
+- 少ないデータで複雑なモデルを推定すると、パラメタがうまく収束しないことがある。
+- こういった場合、"弱情報事前分布"を使う。
+- 無情報事前分布を用いた場合は情報が不足してパラメタの収束が悪くなることがある。
+- 弱情報事前分布：「パラメタはこのくらいに収まるのではないか」という範囲を指定する方法
+
+- 今回の場合、環境収容力$K$に弱情報事前分布を適用する。
+  (内的自然増加率に適用することも考えられる。)
+  
+- 範囲は、4~10とする。
+
+```{r}
+# Kの最大値
+exp(10)
+
+# データの最大値
+max(data_file$y)
+```
+
+- 環境収容力が10の時は、約22000が上限値となる。
+- データの最大値の3倍ほど。
+- この設定を変な値にすると、逆に収束がとても悪くなる。
+- 弱情報事前分布として以下のように指定。
+
+$$
+K \sim N(7,3)
+$$
+
+- こうすると、1シグマ区間が4~10になる。
+- 厳密に範囲を指定するのではなく、想定された最大・最小値よりも幅が広くなることも許容している。
+
+## 5-6~10.stanファイルの作成
+
+- ファイル名：" 6-5-logistic-growth-model.stan "
+
+## 5-11.stanによるモデルの推定
+
+```{r include=FALSE, warning=FALSE}
+# データの準備
+data_stan <- list(
+  y = data_file$y,
+  n_sample = nrow(data_file)
+)
+
+# モデルの推定
+fit_stan_growth <- stan(
+  file = "6-5-logistic-growth-model.stan",
+  data = data_stan,
+  iter = 5000,
+  thin = 5,
+  chains = 4,
+  seed = 1
+)
+```
+
+### 5-12.推定されたパラメタの確認
+
+```{r}
+options(max.print=1000)
+print(fit_stan_growth, probs = c(0.025, 0.5, 0.975555), digits = 1)
+```
+
+```{r}
+print(
+  fit_stan_growth,
+  digits = 2,
+  probs = c(0.025,0.5,0.975),
+  pars = c("r","K")
+)
+```
+
+- 個体数の理論的な上限値を求めてみる。
+
+```{r}
+sampling_result <- rstan::extract(fit_stan_growth)
+exp(quantile(sampling_result$K, probs = c(0.1,0.5,0.9)))
+```
+
+## 5-13.平滑化された個体数の図示
+
+- 過程誤差が無いことを想定した理論上の個体群増加曲線を描く。
+- 今回は推定値の中央値のみを用いる。
+
+```{r}
+model_lambda_smooth <- apply(
+  X = sampling_result$lambda_smooth,
+  MARGIN = 2,
+  FUN = median
+)
+```
+
+```{r}
+# データの整形
+stan_df <- data.frame(
+  y = data_file$y,
+  fit = model_lambda_smooth,
+  time = data_file$time
+)
+
+# 図示
+ggplot(data = stan_df, aes(x = time, y = y)) +
+  labs(title = "誤差を取り除いた個体数の変動") +
+  geom_line() +
+  geom_line(aes(y = fit), size = 1.2)
+```
+
